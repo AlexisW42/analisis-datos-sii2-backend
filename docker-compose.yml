@@ -1,0 +1,26 @@
+services:
+  frontend:
+    build:
+      context: ../analisis-datos-sii2-frontend
+      dockerfile: Dockerfile.dev
+    container_name: sii2_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../analisis-datos-sii2-frontend:/app
+      - /app/.next
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: sii2_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - ENV=development
