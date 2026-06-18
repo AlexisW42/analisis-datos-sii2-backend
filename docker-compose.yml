@@ -24,3 +24,29 @@ services:
       - .:/app
     environment:
       - ENV=development
+      - DATABASE_URL=postgresql://admin:adminpassword@db:5432/sii2_db
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15-alpine
+    container_name: sii2_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: adminpassword
+      POSTGRES_DB: sii2_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  adminer:
+    image: adminer
+    container_name: sii2_adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
