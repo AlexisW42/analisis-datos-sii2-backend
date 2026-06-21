@@ -47,3 +47,5 @@ alembic
 passlib[bcrypt]
 pyjwt
 python-multipart
+pandas
+openpyxl

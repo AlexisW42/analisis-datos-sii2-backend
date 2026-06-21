@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import engine, Base, get_db
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from app.modules.carga.router import router as carga_router
 
 # Importar routers
 from app.modules.usuarios.router import router as usuarios_router
@@ -13,6 +14,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 app.include_router(usuarios_router)
+app.include_router(carga_router)
 
 @app.get("/")
 def read_root():
