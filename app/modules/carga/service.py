@@ -39,10 +39,7 @@ class ValidadorArchivo:
                 pd.read_csv(file.file, nrows=5)
             elif extension == '.xlsx':
                 pd.read_excel(file.file, nrows=5)
-                
-            # ⚠️ EL TRUCO DEL INGENIERO: Devolver el "cursor" al principio
-            # Como Pandas ya leyó el archivo, el puntero de lectura quedó abajo. 
-            # Si no lo regresamos a cero, cuando lo queramos guardar, se guardará vacío.
+
             file.file.seek(0)
             
         except Exception as e:
