@@ -58,5 +58,28 @@ class ValidadorArchivo:
         
         return True
 
+class GestorAlmacenamiento:
+    def __init__(self):
+        self.base_dir = "/app/storage/datasets"
+        import os
+        os.makedirs(self.base_dir, exist_ok=True)
+        
+    def guardar_archivo_fisico(self, file: UploadFile) -> str:
+        import uuid
+        import os
+        import shutil
+        
+        # Generar nombre único para evitar colisiones
+        extension = f".{file.filename.split('.')[-1].lower()}"
+        nombre_unico = f"{uuid.uuid4().hex}{extension}"
+        ruta_completa = os.path.join(self.base_dir, nombre_unico)
+        
+        # Guardar el archivo
+        file.file.seek(0)
+        with open(ruta_completa, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        return ruta_completa
+
 class ControladorCarga:
     pass
