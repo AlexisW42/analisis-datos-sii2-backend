@@ -1,30 +1,34 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.database import engine, Base, get_db
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-# Importar routers
+from app.core.database import get_db
+from app.core.config import settings
 from app.modules.usuarios.router import router as usuarios_router
 
-# Crear las tablas en la BD (Nota: Considerar usar Alembic en el futuro)
-Base.metadata.create_all(bind=engine)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.FRONTEND_URL],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Inclusion de routers
 app.include_router(usuarios_router)
 
 @app.get("/")
 def read_root():
     return {"message": "Inicio"}
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 @app.get("/api/datos")
 def obtener_datos():
