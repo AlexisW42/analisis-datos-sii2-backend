@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from app.modules.carga.router import router as carga_router
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -25,6 +26,7 @@ app.add_middleware(
 
 # Inclusion de routers
 app.include_router(usuarios_router)
+app.include_router(carga_router)
 
 @app.get("/")
 def read_root():
