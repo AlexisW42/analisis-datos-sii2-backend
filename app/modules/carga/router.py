@@ -27,9 +27,6 @@ def cargar_dataset(file: UploadFile = File(...)):
         }
         
     except ValueError as e:
-        # FLUJOS ALTERNOS / EXCEPCIONES: 
-        # Si el validador lanza un ValueError (formato inválido, muy pesado, dañado),
-        # lo atrapamos aquí y devolvemos un Error 400 (Bad Request) al FrontEnd.
         raise HTTPException(status_code=400, detail=str(e))
         
     except Exception as e:
