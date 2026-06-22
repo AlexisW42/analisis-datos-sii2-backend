@@ -9,12 +9,28 @@ class ValidadorArchivo:
 
     def valida_formato(self, file: UploadFile):
         # Extraemos la extensión del archivo (ej. ".csv")
-        extension = f".{file.filename.split('.')[-1].lower()}"
+        try:
+            extension = f".{file.filename.split('.')[-1].lower()}"
         
-        if extension not in self.formatos_validos:
-            # Si no es un formato válido, lanzamos un error que detiene el proceso
-            raise ValueError(f"Formato no válido. Solo se permiten archivos {self.formatos_validos}")
-        
+            if extension not in self.formatos_validos:
+                # Si no es un formato válido, lanzamos un error que detiene el proceso
+                raise ValueError(f"Formato no válido. Solo se permiten archivos {self.formatos_validos}")
+
+            if extension == '.csv':
+                # Leemos el archivo guardándolo temporalmente en una variable 'df' (DataFrame)
+                df = pd.read_csv(file.file, nrows=5)
+                
+                # Verificamos cuántas columnas reconoció Pandas
+                if len(df.columns) < 2:
+                    raise ValueError("El archivo CSV no tiene la estructura de una tabla. Verifique que no esté vacío y que use comas (,) como separador.")
+                    
+            elif extension == '.xlsx':
+                df = pd.read_excel(file.file, nrows=5)
+                if len(df.columns) < 2:
+                    raise ValueError("El archivo Excel no parece contener una tabla de datos válida.")
+                
+            # Devolvemos el cursor al principio
+            file.file.seek(0)
         return True
 
     def validar_tamano(self, file: UploadFile):
