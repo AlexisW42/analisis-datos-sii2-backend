@@ -66,6 +66,45 @@ def listar_datasets_usuario(
         for dataset in datasets
     ]
 
+@router.delete("/datasets/{dataset_id}")
+def eliminar_dataset_usuario(
+    dataset_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """
+    Elimina un dataset perteneciente al usuario autenticado.
+
+    La consulta filtra por `id` y `usuario_id` al mismo tiempo. Asi se evita que
+    un usuario pueda borrar datasets de otra cuenta aunque conozca el id.
+    """
+    dataset = (
+        db.query(models.Dataset)
+        .filter(
+            models.Dataset.id == dataset_id,
+            models.Dataset.usuario_id == current_user.id
+        )
+        .first()
+    )
+
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset no encontrado")
+
+    ruta_archivo = dataset.ruta_archivo
+
+    if ruta_archivo and os.path.isfile(ruta_archivo):
+        try:
+            os.remove(ruta_archivo)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"No se pudo eliminar el archivo fisico: {str(exc)}")
+
+    # Una vez eliminado el archivo fisico, se elimina el registro para que deje
+    # de aparecer en el panel principal.
+    db.delete(dataset)
+    db.commit()
+
+    return {"message": "Dataset eliminado correctamente", "dataset_id": dataset_id}
+
 # ---------------------------------------------------------
 # CU01: Cargar DataSet (Endpoint Principal)
 # ---------------------------------------------------------
