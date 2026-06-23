@@ -1,5 +1,11 @@
 from fastapi import UploadFile
 import pandas as pd
+import os
+import re
+import shutil
+import uuid
+
+from app.core.config import settings
 
 class ValidadorArchivo:
     def __init__(self):
@@ -62,21 +68,32 @@ class ValidadorArchivo:
         self.validar_estructura(file)
         
         return True
+    
 class GestorAlmacenamiento:
     def __init__(self):
-        self.base_dir = "/app/storage/datasets"
-        import os
+        self.base_dir = settings.DATASETS_STORAGE_DIR
         os.makedirs(self.base_dir, exist_ok=True)
-        
-    def guardar_archivo_fisico(self, file: UploadFile) -> str:
-        import uuid
-        import os
-        import shutil
-        
+
+    def nombre_carpeta_usuario(self, identificador_usuario: str) -> str:
+        """
+        Convierte el identificador del usuario en un nombre seguro de carpeta.
+
+        Actualmente el usuario no tiene un campo de nombre propio, por eso se
+        usa su email. Se reemplazan caracteres especiales para evitar rutas
+        invalidas o ambiguas dentro del sistema de archivos.
+        """
+        nombre_limpio = re.sub(r"[^a-zA-Z0-9._-]+", "_", identificador_usuario.strip().lower())
+        return nombre_limpio or "usuario_sin_identificador"
+
+    def guardar_archivo_fisico(self, file: UploadFile, identificador_usuario: str) -> str:
+        carpeta_usuario = self.nombre_carpeta_usuario(identificador_usuario)
+        ruta_usuario = os.path.join(self.base_dir, carpeta_usuario)
+        os.makedirs(ruta_usuario, exist_ok=True)
+
         # Generar nombre único para evitar colisiones
         extension = f".{file.filename.split('.')[-1].lower()}"
         nombre_unico = f"{uuid.uuid4().hex}{extension}"
-        ruta_completa = os.path.join(self.base_dir, nombre_unico)
+        ruta_completa = os.path.join(ruta_usuario, nombre_unico)
         
         # Guardar el archivo
         file.file.seek(0)
