@@ -59,7 +59,7 @@ def register_user(user: schemas.UserRegister, db: Session = Depends(get_db)):
 
     Este endpoint esta pensado para alta pública de usuarios normales. Por eso
     recibe `UserRegister`, que no permite escoger rol, y delega en
-    `service.register_user` la creacion con rol `user`.
+    `service.register_user` la creacion con rol `analista`.
     """
     
     # Antes de insertar se verifica que el email no este registrado. Esto evita

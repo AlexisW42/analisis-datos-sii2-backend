@@ -78,7 +78,7 @@ def create_user(db: Session, user: schemas.UserCreate):
 
 def register_user(db: Session, user: schemas.UserRegister):
     """
-    Registra un usuario final con rol fijo `user`.
+    Registra un usuario final con rol fijo `analista`.
 
     Este flujo corresponde al registro publico. A diferencia de `create_user`,
     no acepta rol desde el cliente para impedir que alguien se registre como
@@ -88,12 +88,12 @@ def register_user(db: Session, user: schemas.UserRegister):
     # administrativa, manteniendo una unica forma de proteger contrasenas.
     hashed_password = get_password_hash(user.password)
 
-    # El rol se asigna explicitamente como texto `user`; asi se ignora cualquier
+    # El rol se asigna explicitamente como texto `analista`; asi se ignora cualquier
     # intento externo de elevar permisos durante el registro publico.
     db_user = models.Usuario(
         email=user.email,
         hashed_password=hashed_password,
-        rol="user"
+        rol="analista"
     )
 
     # Persiste el nuevo usuario y refresca la instancia para devolver un objeto

@@ -4,6 +4,7 @@ from enum import Enum
 
 class UserRole(str, Enum):
     admin = "admin"
+    analista = "analista"
     user = "user"
 
 class UserBase(BaseModel):
@@ -11,7 +12,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
-    rol: Optional[UserRole] = UserRole.user
+    rol: Optional[UserRole] = UserRole.analista
 
 class UserRegister(UserBase):
     password: str = Field(min_length=6)
