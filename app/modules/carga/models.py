@@ -9,6 +9,7 @@ class Dataset(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, index=True, nullable=False)
     descripcion = Column(String, nullable=True)
+    nombre_archivo = Column(String, nullable=True)
     ruta_archivo = Column(String, nullable=False)
     peso_bytes = Column(Integer, nullable=False)
     fecha_subida = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)

@@ -1,10 +1,12 @@
+import os
+from typing import List
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends
 from sqlalchemy.orm import Session
 from .service import ValidadorArchivo, GestorAlmacenamiento
 from app.core.database import get_db
 from app.modules.usuarios.service import get_current_user
 from app.modules.usuarios.models import Usuario
-from app.modules.carga import models
+from app.modules.carga import models, schemas
 
 router = APIRouter(prefix="/carga", tags=["carga"])
 validador = ValidadorArchivo()
@@ -13,6 +15,56 @@ gestor = GestorAlmacenamiento()
 @router.get("/")
 def get_carga():
     return {"message": "Módulo de Carga (CU01)"}
+
+@router.get("/datasets", response_model=List[schemas.DatasetResponse])
+def listar_datasets_usuario(
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """
+    Lista los datasets cargados por el usuario autenticado.
+
+    Este endpoint depende de `get_current_user`, por lo que solo responde cuando
+    la petición incluye un token Bearer válido. El usuario obtenido desde el
+    token se usa para filtrar la consulta y evitar que una persona vea datasets
+    pertenecientes a otros usuarios.
+    """
+    # Se consultan únicamente los datasets cuyo `usuario_id` coincide con el id
+    # del usuario autenticado. Este filtro es la regla principal de aislamiento
+    # de datos entre usuarios.
+    datasets = (
+        db.query(models.Dataset)
+        .filter(models.Dataset.usuario_id == current_user.id)
+        # Los resultados se ordenan del más reciente al más antiguo para que la
+        # interfaz pueda mostrar primero las cargas más nuevas.
+        .order_by(models.Dataset.fecha_subida.desc())
+        .all()
+    )
+
+    # Se transforma cada modelo SQLAlchemy en el esquema de respuesta esperado
+    # por la API. Esto permite exponer solo los campos necesarios y calcular
+    # valores derivados sin devolver directamente la entidad de base de datos.
+    return [
+        schemas.DatasetResponse(
+            id=dataset.id,
+            nombre=dataset.nombre,
+            descripcion=dataset.descripcion,
+            # `nombre_archivo` puede venir vacío en registros antiguos. En ese
+            # caso se usa el nombre del archivo tomado desde la ruta física para
+            # mantener compatibilidad con datasets ya guardados.
+            nombre_archivo=dataset.nombre_archivo or os.path.basename(dataset.ruta_archivo),
+            peso_bytes=dataset.peso_bytes,
+            fecha_subida=dataset.fecha_subida,
+            # El formato se calcula desde la extensión del archivo y se normaliza
+            # en mayúsculas para que el cliente reciba valores consistentes como
+            # CSV, XLSX o JSON.
+            formato=os.path.splitext(dataset.nombre_archivo or dataset.ruta_archivo)[1].replace(".", "").upper(),
+            # Por ahora todo dataset listado se considera disponible porque ya
+            # fue validado, guardado en disco y registrado en la base de datos.
+            estado="Disponible",
+        )
+        for dataset in datasets
+    ]
 
 # ---------------------------------------------------------
 # CU01: Cargar DataSet (Endpoint Principal)
@@ -39,6 +91,7 @@ def cargar_dataset(
         nuevo_dataset = models.Dataset(
             nombre=nombre,
             descripcion=descripcion,
+            nombre_archivo=file.filename,
             ruta_archivo=ruta_archivo,
             peso_bytes=file.size,
             usuario_id=current_user.id
