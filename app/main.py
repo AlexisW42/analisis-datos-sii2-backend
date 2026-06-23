@@ -9,6 +9,7 @@ from app.modules.carga.router import router as carga_router
 from app.core.database import get_db
 from app.core.config import settings
 from app.modules.usuarios.router import router as usuarios_router
+from app.modules.perfilado.router import router as perfilado_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,6 +28,7 @@ app.add_middleware(
 # Inclusion de routers
 app.include_router(usuarios_router)
 app.include_router(carga_router)
+app.include_router(perfilado_router)
 
 @app.get("/")
 def read_root():
