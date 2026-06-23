@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from enum import Enum
 
@@ -12,6 +12,9 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     rol: Optional[UserRole] = UserRole.user
+
+class UserRegister(UserBase):
+    password: str = Field(min_length=6)
 
 class UserLogin(UserBase):
     password: str
