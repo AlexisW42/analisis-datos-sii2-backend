@@ -1,10 +1,12 @@
+import json
 import os
 from typing import Any
 
 import pandas as pd
+from sqlalchemy.orm import Session
 
 from app.modules.carga.models import Dataset
-from app.modules.perfilado import schemas
+from app.modules.perfilado import models, schemas
 
 
 def cargar_dataframe_desde_dataset(dataset: Dataset) -> pd.DataFrame:
@@ -73,6 +75,26 @@ def contar_atipicos_iqr(serie: pd.Series) -> int:
     return int(((valores < limite_inferior) | (valores > limite_superior)).sum())
 
 
+def calcular_cuartiles(serie: pd.Series) -> tuple[float | None, float | None, float | None]:
+    """
+    Calcula Q1, Q2 y Q3 para columnas numericas.
+
+    Los valores no numericos se convierten a `NaN` y se descartan. Si no queda
+    ningun valor valido, se retornan `None` para que el frontend muestre que no
+    aplica en la tabla general del perfilado.
+    """
+    valores = pd.to_numeric(serie, errors="coerce").dropna()
+
+    if valores.empty:
+        return None, None, None
+
+    return (
+        float(valores.quantile(0.25)),
+        float(valores.quantile(0.50)),
+        float(valores.quantile(0.75)),
+    )
+
+
 def formatear_numero(valor: Any) -> str:
     """
     Convierte numeros de Pandas/Python en texto legible para la interfaz.
@@ -117,7 +139,7 @@ def construir_variables(df: pd.DataFrame) -> list[schemas.PerfiladoVariable]:
     Genera el diagnostico fila por fila para la tabla de variables.
 
     Cada columna del dataset se convierte en un resumen con tipo, cantidad de
-    valores validos, nulos, atipicos y estado visual para revision.
+    valores validos, nulos y atipicos para revision.
     """
     variables: list[schemas.PerfiladoVariable] = []
     total_registros = len(df)
@@ -126,9 +148,8 @@ def construir_variables(df: pd.DataFrame) -> list[schemas.PerfiladoVariable]:
         serie = df[columna]
         tipo = clasificar_tipo_variable(serie)
         nulos = int(serie.isna().sum())
-        porcentaje_nulos = 0.0 if total_registros == 0 else round((nulos / total_registros) * 100, 2)
         atipicos = contar_atipicos_iqr(serie) if tipo == "Numérica" else None
-        estado = "Revisar" if nulos > 0 or (atipicos or 0) > 0 else "Correcta"
+        q1, q2, q3 = calcular_cuartiles(serie) if tipo == "Numérica" else (None, None, None)
 
         variables.append(
             schemas.PerfiladoVariable(
@@ -136,21 +157,22 @@ def construir_variables(df: pd.DataFrame) -> list[schemas.PerfiladoVariable]:
                 tipo=tipo,
                 validos=int(total_registros - nulos),
                 nulos=nulos,
-                porcentaje_nulos=porcentaje_nulos,
+                q1=q1,
+                q2=q2,
+                q3=q3,
                 atipicos=atipicos,
-                estado=estado,
             )
         )
 
     return variables
 
 
-def construir_distribucion_numerica(serie: pd.Series) -> list[schemas.DistribucionRango]:
+def construir_distribucion_numerica(serie: pd.Series) -> list[schemas.DistribucionCantidad]:
     """
     Agrupa una variable numerica en rangos para graficar barras horizontales.
 
-    `pd.cut` divide los datos en hasta cinco intervalos. Luego se calcula que
-    porcentaje de valores cae dentro de cada intervalo.
+    `pd.cut` divide los datos en hasta cinco intervalos. Luego se calcula la
+    cantidad de valores que cae dentro de cada intervalo.
     """
     valores = pd.to_numeric(serie, errors="coerce").dropna()
 
@@ -159,11 +181,31 @@ def construir_distribucion_numerica(serie: pd.Series) -> list[schemas.Distribuci
 
     bins = min(5, max(1, valores.nunique()))
     cortes = pd.cut(valores, bins=bins, duplicates="drop")
-    porcentajes = cortes.value_counts(normalize=True, sort=False) * 100
+    cantidades = cortes.value_counts(sort=False)
 
     return [
-        schemas.DistribucionRango(rango=str(indice), porcentaje=round(float(porcentaje), 1))
-        for indice, porcentaje in porcentajes.items()
+        schemas.DistribucionCantidad(rango=str(indice), cantidad=int(cantidad))
+        for indice, cantidad in cantidades.items()
+    ]
+
+
+def construir_cantidades_categoria(serie: pd.Series) -> list[schemas.DistribucionCantidad]:
+    """
+    Construye la distribucion por cantidad para variables no numericas.
+
+    Se toman los cinco valores mas frecuentes y se devuelve cuantas veces
+    aparece cada uno. Esta estructura alimenta el grafico de barras del detalle
+    usando cantidades absolutas, no porcentajes.
+    """
+    valores = serie.dropna()
+
+    if valores.empty:
+        return []
+
+    cantidades = valores.astype(str).value_counts().head(5)
+    return [
+        schemas.DistribucionCantidad(rango=str(indice), cantidad=int(cantidad))
+        for indice, cantidad in cantidades.items()
     ]
 
 
@@ -217,7 +259,7 @@ def construir_detalle_variable(df: pd.DataFrame, variable: schemas.PerfiladoVari
             schemas.EstadisticaVariable(etiqueta="Más frecuente", valor=str(serie.mode(dropna=True).iloc[0]) if not serie.mode(dropna=True).empty else "N/D"),
             schemas.EstadisticaVariable(etiqueta="Nulos", valor=str(variable.nulos)),
         ]
-        distribucion = construir_porcentajes_categoria(serie)
+        distribucion = construir_cantidades_categoria(serie)
 
     return schemas.PerfiladoDetalleVariable(
         nombre=variable.nombre,
@@ -230,27 +272,140 @@ def construir_detalle_variable(df: pd.DataFrame, variable: schemas.PerfiladoVari
     )
 
 
-def generar_perfilado(dataset: Dataset, variable_detalle: str | None = None) -> schemas.PerfiladoResponse:
+def construir_cache_perfilado(dataset: Dataset) -> dict[str, Any]:
     """
-    Orquesta el perfilado completo de un dataset.
+    Calcula el perfilado completo que se almacena en perfilamiento.json.
 
-    Esta es la funcion principal del modulo: lee el archivo, calcula variables,
-    resumen general y selecciona una variable para el panel de detalle.
+    El JSON cacheado guarda los detalles de todas las variables para que el
+    frontend pueda cambiar la seleccion sin recalcular el perfilado completo.
     """
     df = cargar_dataframe_desde_dataset(dataset)
     variables = construir_variables(df)
     resumen = construir_resumen(df, variables)
+    detalles_variables = {
+        variable.nombre: construir_detalle_variable(df, variable).model_dump(mode="json")
+        for variable in variables
+    }
 
-    variable_objetivo = None
-    if variables:
-        variable_objetivo = next((variable for variable in variables if variable.nombre == variable_detalle), variables[0])
+    return {
+        "dataset_id": dataset.id,
+        "dataset_nombre": dataset.nombre,
+        "nombre_archivo": dataset.nombre_archivo,
+        "fecha_subida": dataset.fecha_subida.isoformat(),
+        "resumen": resumen.model_dump(mode="json"),
+        "variables": [variable.model_dump(mode="json") for variable in variables],
+        "detalles_variables": detalles_variables,
+    }
 
-    return schemas.PerfiladoResponse(
-        dataset_id=dataset.id,
-        dataset_nombre=dataset.nombre,
-        nombre_archivo=dataset.nombre_archivo,
-        fecha_subida=dataset.fecha_subida,
-        resumen=resumen,
-        variables=variables,
-        variable_detalle=construir_detalle_variable(df, variable_objetivo) if variable_objetivo else None,
-    )
+
+def construir_respuesta_desde_cache(cache: dict[str, Any], variable_detalle: str | None = None) -> dict[str, Any]:
+    """
+    Adapta el JSON cacheado al contrato publico del endpoint.
+
+    El archivo `perfilamiento.json` guarda detalles para todas las variables,
+    pero la respuesta HTTP mantiene solo una `variable_detalle`. Si el cliente
+    no pide variable o pide una inexistente, se usa la primera disponible.
+    """
+    variables = cache.get("variables") or []
+    detalles_variables = cache.get("detalles_variables") or {}
+    variable_objetivo = variable_detalle
+
+    if not variable_objetivo and variables:
+        variable_objetivo = variables[0].get("nombre")
+
+    if variable_objetivo not in detalles_variables and variables:
+        variable_objetivo = variables[0].get("nombre")
+
+    return {
+        "dataset_id": cache["dataset_id"],
+        "dataset_nombre": cache["dataset_nombre"],
+        "nombre_archivo": cache.get("nombre_archivo"),
+        "fecha_subida": cache["fecha_subida"],
+        "resumen": cache["resumen"],
+        "variables": variables,
+        "variable_detalle": detalles_variables.get(variable_objetivo) if variable_objetivo else None,
+    }
+
+
+def ruta_perfilado_dataset(dataset: Dataset) -> str:
+    """
+    Devuelve la ruta del archivo cacheado junto al archivo fisico del dataset.
+
+    Los datasets nuevos viven en su propia carpeta; por eso el perfilamiento se
+    guarda como `perfilamiento.json` dentro de esa misma carpeta.
+    """
+    return os.path.join(os.path.dirname(dataset.ruta_archivo), "perfilamiento.json")
+
+
+def calcular_peso_mb(ruta_archivo: str) -> float:
+    """
+    Calcula el peso de un archivo en megabytes.
+
+    El valor se redondea a seis decimales para registrar archivos pequenos sin
+    perder la referencia de tamano en la tabla `perfilado`.
+    """
+    return round(os.path.getsize(ruta_archivo) / (1024 * 1024), 6)
+
+
+def guardar_cache_perfilado(db: Session, dataset: Dataset, cache: dict[str, Any]) -> models.Perfilado:
+    """
+    Persiste el perfilado en disco y registra su metadata en base de datos.
+
+    Si el dataset ya tiene un registro en `perfilado`, se actualiza la ruta y
+    el peso del JSON. Si es la primera generacion, se crea el registro asociado
+    al dataset.
+    """
+    ruta_perfilado = ruta_perfilado_dataset(dataset)
+    os.makedirs(os.path.dirname(ruta_perfilado), exist_ok=True)
+
+    # El JSON en disco es la fuente cacheada para evitar recalcular Pandas en
+    # cada carga de la vista de perfilado.
+    with open(ruta_perfilado, "w", encoding="utf-8") as archivo:
+        json.dump(cache, archivo, ensure_ascii=False, indent=2)
+
+    perfilado = db.query(models.Perfilado).filter(models.Perfilado.id_dataset == dataset.id).first()
+    if perfilado is None:
+        perfilado = models.Perfilado(id_dataset=dataset.id, path_perfilado=ruta_perfilado, weigth_mb=calcular_peso_mb(ruta_perfilado))
+        db.add(perfilado)
+    else:
+        perfilado.path_perfilado = ruta_perfilado
+        perfilado.weigth_mb = calcular_peso_mb(ruta_perfilado)
+
+    db.commit()
+    db.refresh(perfilado)
+    return perfilado
+
+
+def cargar_cache_perfilado(perfilado: models.Perfilado) -> dict[str, Any] | None:
+    """
+    Lee el JSON de perfilado previamente generado.
+
+    Retorna `None` cuando el archivo no existe, no se puede abrir o esta
+    corrupto. El llamador usa ese `None` como senal para regenerar el cache.
+    """
+    if not os.path.isfile(perfilado.path_perfilado):
+        return None
+
+    try:
+        with open(perfilado.path_perfilado, "r", encoding="utf-8") as archivo:
+            return json.load(archivo)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def obtener_o_generar_perfilado(db: Session, dataset: Dataset, variable_detalle: str | None = None) -> dict[str, Any]:
+    """
+    Punto de entrada del endpoint para obtener un perfilado con cache.
+
+    Primero intenta usar el registro y archivo existentes. Si no hay metadata,
+    falta el JSON o el JSON no es valido, recalcula el perfilado una sola vez,
+    lo guarda y luego devuelve la respuesta solicitada por el frontend.
+    """
+    perfilado = db.query(models.Perfilado).filter(models.Perfilado.id_dataset == dataset.id).first()
+    cache = cargar_cache_perfilado(perfilado) if perfilado else None
+
+    if cache is None:
+        cache = construir_cache_perfilado(dataset)
+        guardar_cache_perfilado(db, dataset, cache)
+
+    return construir_respuesta_desde_cache(cache, variable_detalle)

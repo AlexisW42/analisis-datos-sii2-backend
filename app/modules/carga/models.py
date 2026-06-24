@@ -16,4 +16,5 @@ class Dataset(Base):
     
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
     usuario = relationship("Usuario")
+    perfilado = relationship("Perfilado", back_populates="dataset", cascade="all, delete-orphan", uselist=False)
     

@@ -18,9 +18,10 @@ class PerfiladoVariable(BaseModel):
     tipo: str
     validos: int
     nulos: int
-    porcentaje_nulos: float
+    q1: float | None = None
+    q2: float | None = None
+    q3: float | None = None
     atipicos: int | None = None
-    estado: str
 
 
 class EstadisticaVariable(BaseModel):
@@ -33,13 +34,18 @@ class DistribucionRango(BaseModel):
     porcentaje: float
 
 
+class DistribucionCantidad(BaseModel):
+    rango: str
+    cantidad: int
+
+
 class PerfiladoDetalleVariable(BaseModel):
     nombre: str
     tipo: str
     validos: int
     nulos: int
     estadisticas: list[EstadisticaVariable]
-    distribucion: list[DistribucionRango]
+    distribucion: list[DistribucionCantidad]
     porcentajes: list[DistribucionRango]
 
 

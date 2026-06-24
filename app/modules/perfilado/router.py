@@ -38,7 +38,7 @@ def obtener_perfilado_dataset(
         raise HTTPException(status_code=404, detail="Dataset no encontrado")
 
     try:
-        return service.generar_perfilado(dataset=dataset, variable_detalle=variable)
+        return service.obtener_o_generar_perfilado(db=db, dataset=dataset, variable_detalle=variable)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except FileNotFoundError:

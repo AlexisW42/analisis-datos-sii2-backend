@@ -2,8 +2,8 @@ from fastapi import UploadFile
 import pandas as pd
 import os
 import re
+import secrets
 import shutil
-import uuid
 
 from app.core.config import settings
 
@@ -85,15 +85,22 @@ class GestorAlmacenamiento:
         nombre_limpio = re.sub(r"[^a-zA-Z0-9._-]+", "_", identificador_usuario.strip().lower())
         return nombre_limpio or "usuario_sin_identificador"
 
-    def guardar_archivo_fisico(self, file: UploadFile, identificador_usuario: str) -> str:
+    def nombre_carpeta_dataset(self, nombre_dataset: str) -> str:
+        nombre_limpio = re.sub(r"[^a-zA-Z0-9._-]+", "_", nombre_dataset.strip().lower()).strip("._-")
+        hash_dataset = secrets.token_hex(5)
+        return f"{nombre_limpio or 'dataset'}_{hash_dataset}"
+
+    def guardar_archivo_fisico(self, file: UploadFile, identificador_usuario: str, nombre_dataset: str) -> str:
         carpeta_usuario = self.nombre_carpeta_usuario(identificador_usuario)
         ruta_usuario = os.path.join(self.base_dir, carpeta_usuario)
         os.makedirs(ruta_usuario, exist_ok=True)
 
-        # Generar nombre único para evitar colisiones
+        ruta_dataset = os.path.join(ruta_usuario, self.nombre_carpeta_dataset(nombre_dataset))
+        os.makedirs(ruta_dataset, exist_ok=True)
+
         extension = f".{file.filename.split('.')[-1].lower()}"
-        nombre_unico = f"{uuid.uuid4().hex}{extension}"
-        ruta_completa = os.path.join(ruta_usuario, nombre_unico)
+        nombre_archivo = re.sub(r"[^a-zA-Z0-9._-]+", "_", os.path.splitext(file.filename)[0]).strip("._-")
+        ruta_completa = os.path.join(ruta_dataset, f"{nombre_archivo or 'dataset'}{extension}")
         
         # Guardar el archivo
         file.file.seek(0)

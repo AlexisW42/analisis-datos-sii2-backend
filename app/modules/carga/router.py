@@ -1,4 +1,6 @@
 import os
+import re
+import shutil
 from typing import List
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends
 from sqlalchemy.orm import Session
@@ -91,10 +93,16 @@ def eliminar_dataset_usuario(
         raise HTTPException(status_code=404, detail="Dataset no encontrado")
 
     ruta_archivo = dataset.ruta_archivo
-
+    # Eliminamos la carpeta contenedora del dataset y todos los archivos generados en la plataforma
     if ruta_archivo and os.path.isfile(ruta_archivo):
         try:
-            os.remove(ruta_archivo)
+            carpeta_dataset = os.path.dirname(ruta_archivo)
+            es_carpeta_dataset = re.search(r"_[a-f0-9]{10}$", os.path.basename(carpeta_dataset)) is not None
+            if es_carpeta_dataset and os.path.isdir(carpeta_dataset):
+                shutil.rmtree(carpeta_dataset)
+            else:
+                os.remove(ruta_archivo)
+
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"No se pudo eliminar el archivo fisico: {str(exc)}")
 
@@ -124,7 +132,7 @@ def cargar_dataset(
         validador.get_resultado(file)
         
         # 2. Guardar físicamente
-        ruta_archivo = gestor.guardar_archivo_fisico(file, current_user.email)
+        ruta_archivo = gestor.guardar_archivo_fisico(file, current_user.email, nombre)
         
         # 3. Guardar en Base de Datos
         nuevo_dataset = models.Dataset(

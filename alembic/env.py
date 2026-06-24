@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.database import Base
 from app.modules.usuarios.models import Usuario
 from app.modules.carga.models import Dataset
+from app.modules.perfilado.models import Perfilado
 
 # add your model's MetaData object here
 # for 'autogenerate' support
