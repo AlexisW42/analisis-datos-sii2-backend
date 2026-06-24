@@ -4,8 +4,10 @@ import os
 import re
 import secrets
 import shutil
+from typing import Any
 
 from app.core.config import settings
+from app.modules.carga.models import Dataset
 
 class ValidadorArchivo:
     def __init__(self):
@@ -111,3 +113,79 @@ class GestorAlmacenamiento:
 
 class ControladorCarga:
     pass
+
+
+def limpiar_valor_dataset(valor: Any) -> Any:
+    """
+    Convierte valores de Pandas/Numpy en tipos seguros para JSON.
+
+    La vista de dataset solo necesita representar datos en tabla. Esta funcion
+    evita enviar `NaN`, timestamps u otros tipos que FastAPI no serializa bien.
+    """
+    if pd.isna(valor):
+        return None
+
+    if hasattr(valor, "isoformat"):
+        return valor.isoformat()
+
+    if hasattr(valor, "item"):
+        return valor.item()
+
+    return valor
+
+
+def cargar_dataframe_dataset(dataset: Dataset) -> pd.DataFrame:
+    """
+    Lee el archivo fisico de un dataset para visualizar su contenido.
+
+    Se soportan los mismos formatos permitidos por la carga actual: CSV y Excel.
+    Si el archivo no existe o tiene un formato no soportado, el endpoint llamador
+    transforma la excepcion en una respuesta HTTP adecuada.
+    """
+    extension = os.path.splitext(dataset.ruta_archivo)[1].lower()
+
+    if extension == ".csv":
+        return pd.read_csv(dataset.ruta_archivo)
+
+    if extension in [".xlsx", ".xls"]:
+        return pd.read_excel(dataset.ruta_archivo)
+
+    raise ValueError("Formato de archivo no soportado para visualizacion")
+
+
+def construir_contenido_dataset(dataset: Dataset, page: int = 1, number_of_records: int = 25) -> dict[str, Any]:
+    """
+    Construye una respuesta paginada con el contenido visible del dataset.
+
+    El archivo puede ser grande, por eso solo se devuelve la pagina solicitada
+    junto con metadata de navegacion. La UI usa esta estructura para renderizar
+    una tabla de inspeccion sin cargar todo el dataset en el navegador.
+    """
+    df = cargar_dataframe_dataset(dataset)
+    total_filas = int(df.shape[0])
+    total_pages = max(1, (total_filas + number_of_records - 1) // number_of_records)
+    current_page = min(max(page, 1), total_pages)
+    inicio = (current_page - 1) * number_of_records
+    fin = inicio + number_of_records
+    muestra = df.iloc[inicio:fin]
+    filas = [
+        {str(columna): limpiar_valor_dataset(valor) for columna, valor in fila.items()}
+        for fila in muestra.to_dict(orient="records")
+    ]
+
+    return {
+        "id": dataset.id,
+        "nombre": dataset.nombre,
+        "descripcion": dataset.descripcion,
+        "nombre_archivo": dataset.nombre_archivo or os.path.basename(dataset.ruta_archivo),
+        "formato": os.path.splitext(dataset.nombre_archivo or dataset.ruta_archivo)[1].replace(".", "").upper(),
+        "total_filas": total_filas,
+        "total_columnas": int(df.shape[1]),
+        "current_page": current_page,
+        "number_of_records": number_of_records,
+        "total_pages": total_pages,
+        "has_previous_page": current_page > 1,
+        "has_next_page": current_page < total_pages,
+        "columnas": [str(columna) for columna in df.columns],
+        "filas": filas,
+    }

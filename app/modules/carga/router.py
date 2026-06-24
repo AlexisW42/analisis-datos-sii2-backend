@@ -2,9 +2,9 @@ import os
 import re
 import shutil
 from typing import List
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends, Query
 from sqlalchemy.orm import Session
-from .service import ValidadorArchivo, GestorAlmacenamiento
+from .service import ValidadorArchivo, GestorAlmacenamiento, construir_contenido_dataset
 from app.core.database import get_db
 from app.modules.usuarios.service import get_current_user
 from app.modules.usuarios.models import Usuario
@@ -67,6 +67,46 @@ def listar_datasets_usuario(
         )
         for dataset in datasets
     ]
+
+@router.get("/datasets/{dataset_id}/contenido", response_model=schemas.DatasetContenidoResponse)
+def obtener_contenido_dataset_usuario(
+    dataset_id: int,
+    page: int = Query(default=1, ge=1),
+    number_of_records: int = Query(default=25, ge=1, le=200),
+    current_page: int | None = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """
+    Devuelve una pagina tabular del dataset perteneciente al usuario actual.
+
+    El contenido se lee desde el archivo fisico guardado en disco, pero siempre
+    se valida propiedad por `usuario_id` antes de abrirlo. Se aceptan `page` y
+    `current_page` para compatibilidad con clientes que nombren distinto la
+    pagina actual.
+    """
+    dataset = (
+        db.query(models.Dataset)
+        .filter(
+            models.Dataset.id == dataset_id,
+            models.Dataset.usuario_id == current_user.id
+        )
+        .first()
+    )
+
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset no encontrado")
+
+    if not dataset.ruta_archivo or not os.path.isfile(dataset.ruta_archivo):
+        raise HTTPException(status_code=404, detail="Archivo fisico del dataset no encontrado")
+
+    try:
+        pagina_solicitada = current_page or page
+        return construir_contenido_dataset(dataset, page=pagina_solicitada, number_of_records=number_of_records)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo leer el dataset: {str(exc)}")
 
 @router.delete("/datasets/{dataset_id}")
 def eliminar_dataset_usuario(
