@@ -49,3 +49,4 @@ pyjwt
 python-multipart
 pandas
 openpyxl
+scipy

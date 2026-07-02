@@ -156,14 +156,20 @@ def eliminar_dataset_usuario(
 # ---------------------------------------------------------
 # CU01: Cargar DataSet (Endpoint Principal)
 # ---------------------------------------------------------
+
 @router.post("/cargar")
 def cargar_dataset(
     nombre: str = Form(...),
     descripcion: str = Form(None),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db)
     current_user: Usuario = Depends(get_current_user)
 ):
+
+    #current_user = db.query(Usuario).first()
+    #if not current_user:
+        #raise HTTPException(status_code=404, detail="No hay usuarios en la base de datos para realizar la prueba.")
+        
     """
     Recibe un archivo y sus metadatos, lo valida, lo guarda en disco y registra en la BD.
     """
