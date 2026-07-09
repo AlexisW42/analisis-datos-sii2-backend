@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     FRONTEND_URL: str = "http://localhost:3000"
     DATASETS_STORAGE_DIR: str = "/app-data/datasets"
-    # LLM_API_KEY: str = ""
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_API_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
     # Agrega más configuraciones según necesites
 
     class Config:
