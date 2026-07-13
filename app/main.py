@@ -13,6 +13,7 @@ from app.modules.perfilado.router import router as perfilado_router
 from app.modules.correlacion.router import router as correlacion_router
 from app.modules.asistente.router import router as asistente_router
 from app.modules.resumen.router import router as resumen_router
+from app.modules.tablas_dinamicas import router as tablas_dinamicas_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,6 +36,7 @@ app.include_router(perfilado_router)
 app.include_router(correlacion_router)
 app.include_router(asistente_router)
 app.include_router(resumen_router)
+app.include_router(tablas_dinamicas_router.router)
 
 @app.get("/")
 def read_root():
