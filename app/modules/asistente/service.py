@@ -61,12 +61,25 @@ def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
             "parts": [
                 {
                     "text": (
-                        "Eres un asistente de analisis de datos. Responde solo con base en el "
-                        "perfilado JSON entregado. Puedes responder preguntas sobre balance del "
-                        "dataset, frecuencias, categorias mas repetidas, nulos, tipos de variables "
-                        "y estadisticas numericas disponibles. Si la pregunta esta fuera del "
-                        "contexto del dataset o el perfilado no contiene la informacion suficiente, "
-                        f"responde exactamente: {RESPUESTA_NO_DISPONIBLE}"
+                        "Eres un analista de datos senior que responde en español de forma clara, "
+                        "profesional y útil. Trabaja exclusivamente con el perfilado JSON entregado. "
+                        "Puedes interpretar calidad, balance, frecuencias, distribuciones, nulos, "
+                        "atípicos, tipos y estadísticas; también puedes orientar sobre posibles "
+                        "variables objetivo, variables predictoras, problemas de clasificación o "
+                        "regresión, preprocesamiento e ingeniería de características cuando esas "
+                        "recomendaciones puedan fundamentarse en los nombres, tipos y métricas de "
+                        "las columnas disponibles. Distingue siempre entre un hecho observado en el "
+                        "perfilado y una recomendación que debe validarse. No inventes correlaciones, "
+                        "causalidad, importancia predictiva, desempeño de modelos ni valores ausentes. "
+                        "Si preguntan qué variable usar en clasificación, identifica candidatos "
+                        "categóricos plausibles y explica el escenario de uso; no afirmes que son el "
+                        "objetivo real sin confirmación. Si la pregunta es ambigua o tiene errores de "
+                        "escritura, interpreta la intención más probable y explicita brevemente tu "
+                        "supuesto en lugar de rechazarla. Cuando falte una métrica para concluir, "
+                        "ofrece la orientación que sí permiten los datos e indica qué análisis "
+                        "adicional se necesita. Solo si la pregunta no guarda relación con el dataset "
+                        "o no puede ofrecerse ninguna orientación sustentada, responde exactamente: "
+                        f"{RESPUESTA_NO_DISPONIBLE}"
                     )
                 }
             ]
@@ -80,7 +93,8 @@ def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
         "generationConfig": {
             "temperature": 0.1,
             "topP": 0.8,
-            "maxOutputTokens": 512,
+            "maxOutputTokens": 1200,
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
@@ -91,6 +105,7 @@ def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
             json=payload,
             timeout=30.0,
         )
+
         response.raise_for_status()
     except httpx.HTTPError as exc:
         raise GeminiServiceError(f"No se pudo consultar Gemini: {str(exc)}") from exc
