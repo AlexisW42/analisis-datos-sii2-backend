@@ -393,13 +393,13 @@ def cargar_cache_perfilado(perfilado: models.Perfilado) -> dict[str, Any] | None
         return None
 
 
-def obtener_o_generar_perfilado(db: Session, dataset: Dataset, variable_detalle: str | None = None) -> dict[str, Any]:
+def obtener_o_generar_cache_perfilado(db: Session, dataset: Dataset) -> dict[str, Any]:
     """
-    Punto de entrada del endpoint para obtener un perfilado con cache.
+    Devuelve el cache completo de perfilado para usos internos.
 
     Primero intenta usar el registro y archivo existentes. Si no hay metadata,
-    falta el JSON o el JSON no es valido, recalcula el perfilado una sola vez,
-    lo guarda y luego devuelve la respuesta solicitada por el frontend.
+    falta el JSON o el JSON no es valido, recalcula el perfilado una sola vez y
+    lo guarda.
     """
     perfilado = db.query(models.Perfilado).filter(models.Perfilado.id_dataset == dataset.id).first()
     cache = cargar_cache_perfilado(perfilado) if perfilado else None
@@ -408,4 +408,15 @@ def obtener_o_generar_perfilado(db: Session, dataset: Dataset, variable_detalle:
         cache = construir_cache_perfilado(dataset)
         guardar_cache_perfilado(db, dataset, cache)
 
+    return cache
+
+
+def obtener_o_generar_perfilado(db: Session, dataset: Dataset, variable_detalle: str | None = None) -> dict[str, Any]:
+    """
+    Punto de entrada del endpoint para obtener un perfilado con cache.
+
+    Reutiliza el cache completo y luego adapta la respuesta al contrato publico
+    del frontend, que expone solo un detalle de variable a la vez.
+    """
+    cache = obtener_o_generar_cache_perfilado(db, dataset)
     return construir_respuesta_desde_cache(cache, variable_detalle)

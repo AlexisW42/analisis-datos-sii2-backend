@@ -4,4 +4,7 @@ __pycache__/
 *.pyc
 .docker/
 storage/
+
+.env
 CLAUDE.md
+

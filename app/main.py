@@ -11,12 +11,14 @@ from app.core.config import settings
 from app.modules.usuarios.router import router as usuarios_router
 from app.modules.perfilado.router import router as perfilado_router
 from app.modules.correlacion.router import router as correlacion_router
+from app.modules.asistente.router import router as asistente_router
+from app.modules.resumen.router import router as resumen_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(title="API de Procesamiento de Datos", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,12 +28,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app = FastAPI(title="API de Procesamiento de Datos")
 # Inclusion de routers
 app.include_router(usuarios_router)
 app.include_router(carga_router)
 app.include_router(perfilado_router)
 app.include_router(correlacion_router)
+app.include_router(asistente_router)
+app.include_router(resumen_router)
 
 @app.get("/")
 def read_root():

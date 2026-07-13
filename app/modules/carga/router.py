@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.modules.usuarios.service import get_current_user
 from app.modules.usuarios.models import Usuario
 from app.modules.carga import models, schemas
+from app.modules.resumen.service import resumen_ejecutivo_disponible, url_resumen_ejecutivo
 
 router = APIRouter(prefix="/carga", tags=["carga"])
 validador = ValidadorArchivo()
@@ -64,6 +65,12 @@ def listar_datasets_usuario(
             # Por ahora todo dataset listado se considera disponible porque ya
             # fue validado, guardado en disco y registrado en la base de datos.
             estado="Disponible",
+            resumen_ejecutivo_disponible=resumen_ejecutivo_disponible(dataset),
+            resumen_ejecutivo_url=(
+                url_resumen_ejecutivo(dataset.id)
+                if resumen_ejecutivo_disponible(dataset)
+                else None
+            ),
         )
         for dataset in datasets
     ]
@@ -102,7 +109,11 @@ def obtener_contenido_dataset_usuario(
 
     try:
         pagina_solicitada = current_page or page
-        return construir_contenido_dataset(dataset, page=pagina_solicitada, number_of_records=number_of_records)
+        contenido = construir_contenido_dataset(dataset, page=pagina_solicitada, number_of_records=number_of_records)
+        disponible = resumen_ejecutivo_disponible(dataset)
+        contenido["resumen_ejecutivo_disponible"] = disponible
+        contenido["resumen_ejecutivo_url"] = url_resumen_ejecutivo(dataset.id) if disponible else None
+        return contenido
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
