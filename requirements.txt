@@ -50,3 +50,5 @@ python-multipart
 pandas
 openpyxl
 scipy
+matplotlib
+reportlab

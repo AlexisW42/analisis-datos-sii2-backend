@@ -15,6 +15,8 @@ class DatasetResponse(BaseModel):
     fecha_subida: datetime
     formato: str
     estado: str = "Disponible"
+    resumen_ejecutivo_disponible: bool = False
+    resumen_ejecutivo_url: str | None = None
 
     class Config:
         from_attributes = True
@@ -35,3 +37,5 @@ class DatasetContenidoResponse(BaseModel):
     has_next_page: bool
     columnas: list[str]
     filas: list[dict[str, Any]]
+    resumen_ejecutivo_disponible: bool = False
+    resumen_ejecutivo_url: str | None = None
