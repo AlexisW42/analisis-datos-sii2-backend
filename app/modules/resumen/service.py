@@ -266,7 +266,7 @@ def interpretar_perfilado_con_gemini(cache: dict[str, Any], variables_selecciona
     try:
         response = httpx.post(
             f"{settings.GEMINI_API_BASE_URL}/models/{settings.GEMINI_MODEL}:generateContent",
-            params={"key": settings.GEMINI_API_KEY}, json=payload, timeout=45.0,
+            headers={"x-goog-api-key": settings.GEMINI_API_KEY}, json=payload, timeout=45.0,
         )
         response.raise_for_status()
         # Gemini puede dividir una respuesta en varias partes; se combinan todas

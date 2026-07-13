@@ -101,14 +101,24 @@ def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
     try:
         response = httpx.post(
             url,
-            params={"key": settings.GEMINI_API_KEY},
+            headers={"x-goog-api-key": settings.GEMINI_API_KEY},
             json=payload,
             timeout=30.0,
         )
 
         response.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise GeminiServiceError(f"No se pudo consultar Gemini: {str(exc)}") from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 429:
+            raise GeminiServiceError(
+                "El asistente alcanzó temporalmente el límite de consultas. Intenta nuevamente en unos minutos."
+            ) from exc
+        raise GeminiServiceError(
+            "El servicio del asistente no está disponible en este momento. Intenta nuevamente más tarde."
+        ) from exc
+    except httpx.RequestError as exc:
+        raise GeminiServiceError(
+            "No fue posible conectar con el servicio del asistente. Intenta nuevamente más tarde."
+        ) from exc
 
     respuesta = extraer_texto_respuesta(response.json())
     return respuesta or RESPUESTA_NO_DISPONIBLE
