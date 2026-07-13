@@ -162,7 +162,7 @@ def cargar_dataset(
     nombre: str = Form(...),
     descripcion: str = Form(None),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user)
 ):
 
