@@ -14,12 +14,8 @@ class ValidadorSeleccion:
         if funcion not in funciones_validas:
             self.mensaje_error = f"La función '{funcion}' no es válida. Opciones permitidas: {funciones_validas}"
             self.combinacion_valida = False
-        return False
-        
-        """
-        Verifica que las columnas existan, que la operación matemática tenga sentido,
-        evita colisiones de ejes y protege la memoria del servidor.
-        """
+            return False
+
         todas_variables = filas + columnas + [valor]
         
         # 1. Verificar que todas las variables existan en el DataFrame
@@ -83,21 +79,21 @@ class MotorPivot:
 
             # ¡El corazón del CU06!
             tabla_pivot = pd.pivot_table(
-                df, 
-                values=valor, 
-                index=filas, 
-                columns=columnas if columnas else None, 
-                aggfunc=func, 
+                df,
+                values=valor,
+                index=filas,
+                columns=columnas if columnas else None,
+                aggfunc=func,
                 fill_value=0 # Rellena vacíos con 0
             )
 
-            # Pandas devuelve un MultiIndex complejo. Lo aplanamos para que FastAPI 
+            # Pandas devuelve un MultiIndex complejo. Lo aplanamos para que FastAPI
             # lo pueda convertir a JSON fácilmente para tu compañero de Frontend.
             tabla_plana = tabla_pivot.reset_index()
-            
+
             self.procesando = False
             return tabla_plana.to_dict(orient="records")
-            
+
         except Exception as e:
             self.procesando = False
             raise ValueError(f"Error al procesar la tabla dinámica: {str(e)}")
