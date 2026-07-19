@@ -52,6 +52,8 @@ def extraer_texto_respuesta(payload: dict[str, Any]) -> str:
 
 
 def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
+    print("VARIALBE",settings.GEMINI_API_KEY)
+    
     if not settings.GEMINI_API_KEY:
         raise GeminiServiceError("GEMINI_API_KEY no esta configurada")
 

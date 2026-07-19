@@ -3,27 +3,38 @@ import os
 from typing import Any
 
 import pandas as pd
+from botocore.exceptions import ClientError
 from sqlalchemy.orm import Session
 
 from app.modules.carga.models import Dataset
+from app.modules.carga.service import GestorAlmacenamiento
 from app.modules.perfilado import models, schemas
+
+# Se reutiliza el mismo cliente/logica de R2 que usa `carga`, en vez de crear
+# una implementacion distinta.
+gestor = GestorAlmacenamiento()
 
 
 def cargar_dataframe_desde_dataset(dataset: Dataset) -> pd.DataFrame:
     """
-    Lee el archivo fisico asociado a un dataset y lo convierte en DataFrame.
+    Lee el archivo del dataset desde R2 y lo convierte en DataFrame.
 
-    El dataset guarda la ruta donde quedo almacenado el archivo. Segun la
-    extension, Pandas usa el lector correspondiente. Si mas adelante se aceptan
-    otros formatos, este es el punto central para agregarlos.
+    `dataset.ruta_archivo` guarda la key del objeto en R2 (igual que en
+    `carga`), no una ruta en disco. Segun la extension, Pandas usa el lector
+    correspondiente. Si mas adelante se aceptan otros formatos, este es el
+    punto central para agregarlos.
     """
+    if not gestor.existe_archivo(dataset.ruta_archivo):
+        raise FileNotFoundError("Archivo fisico del dataset no encontrado en R2")
+
     extension = os.path.splitext(dataset.ruta_archivo)[1].lower()
+    buffer = gestor.leer_archivo(dataset.ruta_archivo)
 
     if extension == ".csv":
-        return pd.read_csv(dataset.ruta_archivo)
+        return pd.read_csv(buffer)
 
     if extension in [".xlsx", ".xls"]:
-        return pd.read_excel(dataset.ruta_archivo)
+        return pd.read_excel(buffer)
 
     raise ValueError("Formato de archivo no soportado para perfilado")
 
@@ -327,49 +338,52 @@ def construir_respuesta_desde_cache(cache: dict[str, Any], variable_detalle: str
     }
 
 
-def ruta_perfilado_dataset(dataset: Dataset) -> str:
+def key_perfilado_dataset(dataset: Dataset) -> str:
     """
-    Devuelve la ruta del archivo cacheado junto al archivo fisico del dataset.
+    Devuelve la key en R2 donde se guarda el perfilamiento.json del dataset.
 
-    Los datasets nuevos viven en su propia carpeta; por eso el perfilamiento se
-    guarda como `perfilamiento.json` dentro de esa misma carpeta.
+    Se usa el mismo prefijo (carpeta) que el archivo original del dataset, asi
+    el perfilado queda junto a el en R2 y se elimina automaticamente cuando
+    `carga` borra la carpeta completa del dataset (`eliminar_carpeta`).
     """
-    return os.path.join(os.path.dirname(dataset.ruta_archivo), "perfilamiento.json")
+    prefijo_dataset = dataset.ruta_archivo.rsplit("/", 1)[0]
+    return f"{prefijo_dataset}/perfilamiento.json"
 
 
-def calcular_peso_mb(ruta_archivo: str) -> float:
+def calcular_peso_mb(tamano_bytes: int) -> float:
     """
-    Calcula el peso de un archivo en megabytes.
+    Calcula el peso en megabytes a partir del tamano en bytes del JSON.
 
-    El valor se redondea a seis decimales para registrar archivos pequenos sin
-    perder la referencia de tamano en la tabla `perfilado`.
+    Se redondea a seis decimales para registrar archivos pequenos sin perder
+    la referencia de tamano en la tabla `perfilado`.
     """
-    return round(os.path.getsize(ruta_archivo) / (1024 * 1024), 6)
+    return round(tamano_bytes / (1024 * 1024), 6)
 
 
 def guardar_cache_perfilado(db: Session, dataset: Dataset, cache: dict[str, Any]) -> models.Perfilado:
     """
-    Persiste el perfilado en disco y registra su metadata en base de datos.
+    Sube el perfilado a R2 y registra su metadata en base de datos.
 
-    Si el dataset ya tiene un registro en `perfilado`, se actualiza la ruta y
-    el peso del JSON. Si es la primera generacion, se crea el registro asociado
-    al dataset.
+    Si el dataset ya tiene un registro en `perfilado`, se actualiza la key y
+    el peso del JSON. Si es la primera generacion, se crea el registro. R2 es
+    la unica fuente de verdad, igual que con el archivo original del dataset.
     """
-    ruta_perfilado = ruta_perfilado_dataset(dataset)
-    os.makedirs(os.path.dirname(ruta_perfilado), exist_ok=True)
+    key_perfilado = key_perfilado_dataset(dataset)
+    contenido = json.dumps(cache, ensure_ascii=False, indent=2).encode("utf-8")
 
-    # El JSON en disco es la fuente cacheada para evitar recalcular Pandas en
-    # cada carga de la vista de perfilado.
-    with open(ruta_perfilado, "w", encoding="utf-8") as archivo:
-        json.dump(cache, archivo, ensure_ascii=False, indent=2)
+    gestor.subir_bytes(key_perfilado, contenido, content_type="application/json")
 
     perfilado = db.query(models.Perfilado).filter(models.Perfilado.id_dataset == dataset.id).first()
     if perfilado is None:
-        perfilado = models.Perfilado(id_dataset=dataset.id, path_perfilado=ruta_perfilado, weigth_mb=calcular_peso_mb(ruta_perfilado))
+        perfilado = models.Perfilado(
+            id_dataset=dataset.id,
+            path_perfilado=key_perfilado,
+            weigth_mb=calcular_peso_mb(len(contenido)),
+        )
         db.add(perfilado)
     else:
-        perfilado.path_perfilado = ruta_perfilado
-        perfilado.weigth_mb = calcular_peso_mb(ruta_perfilado)
+        perfilado.path_perfilado = key_perfilado
+        perfilado.weigth_mb = calcular_peso_mb(len(contenido))
 
     db.commit()
     db.refresh(perfilado)
@@ -378,18 +392,23 @@ def guardar_cache_perfilado(db: Session, dataset: Dataset, cache: dict[str, Any]
 
 def cargar_cache_perfilado(perfilado: models.Perfilado) -> dict[str, Any] | None:
     """
-    Lee el JSON de perfilado previamente generado.
+    Lee el JSON de perfilado previamente generado desde R2.
 
-    Retorna `None` cuando el archivo no existe, no se puede abrir o esta
-    corrupto. El llamador usa ese `None` como senal para regenerar el cache.
+    Retorna `None` cuando el objeto no existe en R2 o el JSON esta corrupto.
+    El llamador usa ese `None` como senal para regenerar el cache.
     """
-    if not os.path.isfile(perfilado.path_perfilado):
+    if not perfilado.path_perfilado:
         return None
 
     try:
-        with open(perfilado.path_perfilado, "r", encoding="utf-8") as archivo:
-            return json.load(archivo)
-    except (OSError, json.JSONDecodeError):
+        buffer = gestor.leer_archivo(perfilado.path_perfilado)
+        return json.loads(buffer.read().decode("utf-8"))
+    except ClientError as exc:
+        codigo = exc.response.get("Error", {}).get("Code", "")
+        if codigo in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return None
 
 

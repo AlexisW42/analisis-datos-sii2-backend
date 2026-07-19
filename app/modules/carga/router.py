@@ -1,6 +1,4 @@
 import os
-import re
-import shutil
 from typing import List
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends, Query
 from sqlalchemy.orm import Session
@@ -53,7 +51,7 @@ def listar_datasets_usuario(
             nombre=dataset.nombre,
             descripcion=dataset.descripcion,
             # `nombre_archivo` puede venir vacío en registros antiguos. En ese
-            # caso se usa el nombre del archivo tomado desde la ruta física para
+            # caso se usa el nombre del archivo tomado desde la key de R2 para
             # mantener compatibilidad con datasets ya guardados.
             nombre_archivo=dataset.nombre_archivo or os.path.basename(dataset.ruta_archivo),
             peso_bytes=dataset.peso_bytes,
@@ -63,7 +61,7 @@ def listar_datasets_usuario(
             # CSV, XLSX o JSON.
             formato=os.path.splitext(dataset.nombre_archivo or dataset.ruta_archivo)[1].replace(".", "").upper(),
             # Por ahora todo dataset listado se considera disponible porque ya
-            # fue validado, guardado en disco y registrado en la base de datos.
+            # fue validado, guardado en R2 y registrado en la base de datos.
             estado="Disponible",
             resumen_ejecutivo_disponible=resumen_ejecutivo_disponible(dataset),
             resumen_ejecutivo_url=(
@@ -87,10 +85,9 @@ def obtener_contenido_dataset_usuario(
     """
     Devuelve una pagina tabular del dataset perteneciente al usuario actual.
 
-    El contenido se lee desde el archivo fisico guardado en disco, pero siempre
-    se valida propiedad por `usuario_id` antes de abrirlo. Se aceptan `page` y
-    `current_page` para compatibilidad con clientes que nombren distinto la
-    pagina actual.
+    El contenido se lee desde Cloudflare R2, pero siempre se valida propiedad
+    por `usuario_id` antes de leerlo. Se aceptan `page` y `current_page` para
+    compatibilidad con clientes que nombren distinto la pagina actual.
     """
     dataset = (
         db.query(models.Dataset)
@@ -104,8 +101,8 @@ def obtener_contenido_dataset_usuario(
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset no encontrado")
 
-    if not dataset.ruta_archivo or not os.path.isfile(dataset.ruta_archivo):
-        raise HTTPException(status_code=404, detail="Archivo fisico del dataset no encontrado")
+    if not dataset.ruta_archivo or not gestor.existe_archivo(dataset.ruta_archivo):
+        raise HTTPException(status_code=404, detail="Archivo del dataset no encontrado en el almacenamiento")
 
     try:
         pagina_solicitada = current_page or page
@@ -143,21 +140,17 @@ def eliminar_dataset_usuario(
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset no encontrado")
 
-    ruta_archivo = dataset.ruta_archivo
-    # Eliminamos la carpeta contenedora del dataset y todos los archivos generados en la plataforma
-    if ruta_archivo and os.path.isfile(ruta_archivo):
+    # Borramos todos los objetos bajo el mismo prefijo en R2 (el archivo
+    # original y cualquier archivo generado aparte, como el resumen
+    # ejecutivo), igual que antes hacía shutil.rmtree con la carpeta local.
+    if dataset.ruta_archivo:
         try:
-            carpeta_dataset = os.path.dirname(ruta_archivo)
-            es_carpeta_dataset = re.search(r"_[a-f0-9]{10}$", os.path.basename(carpeta_dataset)) is not None
-            if es_carpeta_dataset and os.path.isdir(carpeta_dataset):
-                shutil.rmtree(carpeta_dataset)
-            else:
-                os.remove(ruta_archivo)
+            prefijo_dataset = dataset.ruta_archivo.rsplit("/", 1)[0] + "/"
+            gestor.eliminar_carpeta(prefijo_dataset)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"No se pudo eliminar el archivo en R2: {str(exc)}")
 
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"No se pudo eliminar el archivo fisico: {str(exc)}")
-
-    # Una vez eliminado el archivo fisico, se elimina el registro para que deje
+    # Una vez eliminado el archivo en R2, se elimina el registro para que deje
     # de aparecer en el panel principal.
     db.delete(dataset)
     db.commit()
@@ -176,19 +169,14 @@ def cargar_dataset(
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user)
 ):
-
-    #current_user = db.query(Usuario).first()
-    #if not current_user:
-        #raise HTTPException(status_code=404, detail="No hay usuarios en la base de datos para realizar la prueba.")
-        
     """
-    Recibe un archivo y sus metadatos, lo valida, lo guarda en disco y registra en la BD.
+    Recibe un archivo y sus metadatos, lo valida, lo sube a R2 y lo registra en la BD.
     """
     try:
         # 1. Validar el archivo
         validador.get_resultado(file)
         
-        # 2. Guardar físicamente
+        # 2. Subir a Cloudflare R2
         ruta_archivo = gestor.guardar_archivo_fisico(file, current_user.email, nombre)
         
         # 3. Guardar en Base de Datos

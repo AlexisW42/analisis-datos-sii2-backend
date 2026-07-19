@@ -3,8 +3,12 @@ import pandas as pd
 import os
 import re
 import secrets
-import shutil
+from io import BytesIO
 from typing import Any
+
+import boto3
+from botocore.client import Config
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 from app.modules.carga.models import Dataset
@@ -37,6 +41,8 @@ class ValidadorArchivo:
 
     def validar_estructura(self, file: UploadFile):
         # Leemos solo un pedacito del archivo con Pandas para ver si está corrupto o mal estructurado
+        # Esto se hace directo sobre el stream que llega en la request, ANTES de subirlo
+        # a R2, así que no depende de dónde guardemos el archivo despues.
         try:
             extension = f".{file.filename.split('.')[-1].lower()}"
             
@@ -70,11 +76,34 @@ class ValidadorArchivo:
         self.validar_estructura(file)
         
         return True
-    
+
+
 class GestorAlmacenamiento:
+    """
+    Sube, lee y borra los archivos de datasets en Cloudflare R2 usando la API
+    S3-compatible (via boto3).
+
+    Nota: `ruta_archivo` en el modelo Dataset ahora guarda la "key" del objeto
+    en el bucket de R2 (ej. "usuario_x/mi_dataset_ab12cd34ef/datos.csv"),
+    ya no una ruta de archivo en disco.
+    """
+
     def __init__(self):
-        self.base_dir = settings.DATASETS_STORAGE_DIR
-        os.makedirs(self.base_dir, exist_ok=True)
+        self.bucket = settings.R2_BUCKET_NAME
+        self.client = boto3.client(
+            "s3",
+            endpoint_url=f"https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=settings.R2_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+            region_name="auto",  # requerido por boto3, R2 lo ignora
+            config=Config(
+                # boto3 >= 1.36 agrega checksums adicionales por defecto que R2
+                # todavia no soporta del todo. Sin esto pueden fallar los
+                # upload/delete con errores de firma o de checksum.
+                request_checksum_calculation="when_required",
+                response_checksum_validation="when_required",
+            ),
+        )
 
     def nombre_carpeta_usuario(self, identificador_usuario: str) -> str:
         """
@@ -93,26 +122,80 @@ class GestorAlmacenamiento:
         return f"{nombre_limpio or 'dataset'}_{hash_dataset}"
 
     def guardar_archivo_fisico(self, file: UploadFile, identificador_usuario: str, nombre_dataset: str) -> str:
+        """
+        Sube el archivo a R2 y devuelve la key del objeto (lo que se guarda
+        en Dataset.ruta_archivo).
+        """
         carpeta_usuario = self.nombre_carpeta_usuario(identificador_usuario)
-        ruta_usuario = os.path.join(self.base_dir, carpeta_usuario)
-        os.makedirs(ruta_usuario, exist_ok=True)
-
-        ruta_dataset = os.path.join(ruta_usuario, self.nombre_carpeta_dataset(nombre_dataset))
-        os.makedirs(ruta_dataset, exist_ok=True)
+        carpeta_dataset = self.nombre_carpeta_dataset(nombre_dataset)
 
         extension = f".{file.filename.split('.')[-1].lower()}"
         nombre_archivo = re.sub(r"[^a-zA-Z0-9._-]+", "_", os.path.splitext(file.filename)[0]).strip("._-")
-        ruta_completa = os.path.join(ruta_dataset, f"{nombre_archivo or 'dataset'}{extension}")
-        
-        # Guardar el archivo
+        key = f"{carpeta_usuario}/{carpeta_dataset}/{nombre_archivo or 'dataset'}{extension}"
+
         file.file.seek(0)
-        with open(ruta_completa, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        return ruta_completa
+        self.client.upload_fileobj(file.file, self.bucket, key)
+
+        return key
+
+    def leer_archivo(self, key: str) -> BytesIO:
+        """Descarga un objeto de R2 a memoria y devuelve un buffer legible."""
+        buffer = BytesIO()
+        self.client.download_fileobj(self.bucket, key, buffer)
+        buffer.seek(0)
+        return buffer
+
+    def subir_bytes(self, key: str, contenido: bytes, content_type: str = "application/octet-stream") -> None:
+        """
+        Sube contenido generado en memoria (bytes) a R2, sin pasar por UploadFile.
+
+        A diferencia de `guardar_archivo_fisico` (pensado para el archivo que
+        sube el usuario), este metodo sirve para objetos generados por la
+        propia aplicacion, como el JSON de perfilado, sin duplicar la
+        configuracion del cliente boto3.
+        """
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=contenido, ContentType=content_type)
+
+    def existe_archivo(self, key: str) -> bool:
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as exc:
+            codigo = exc.response.get("Error", {}).get("Code", "")
+            if codigo in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
+
+    def eliminar_archivo(self, key: str) -> None:
+        self.client.delete_object(Bucket=self.bucket, Key=key)
+
+    def eliminar_carpeta(self, prefix: str) -> None:
+        """
+        Elimina todos los objetos bajo un prefijo (equivalente a borrar una
+        "carpeta" completa, como hacía shutil.rmtree con el disco local).
+        Esto borra también archivos generados aparte, como el resumen
+        ejecutivo, si viven bajo el mismo prefijo.
+        """
+        paginator = self.client.get_paginator("list_objects_v2")
+        objetos_a_borrar = []
+        for pagina in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            for obj in pagina.get("Contents", []):
+                objetos_a_borrar.append({"Key": obj["Key"]})
+
+        # delete_objects acepta un máximo de 1000 keys por llamada
+        for i in range(0, len(objetos_a_borrar), 1000):
+            lote = objetos_a_borrar[i:i + 1000]
+            if lote:
+                self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": lote})
+
 
 class ControladorCarga:
     pass
+
+
+# Instancia compartida para las funciones sueltas de este módulo (evita crear
+# un cliente boto3 nuevo en cada request de lectura de contenido).
+_gestor = GestorAlmacenamiento()
 
 
 def limpiar_valor_dataset(valor: Any) -> Any:
@@ -136,19 +219,20 @@ def limpiar_valor_dataset(valor: Any) -> Any:
 
 def cargar_dataframe_dataset(dataset: Dataset) -> pd.DataFrame:
     """
-    Lee el archivo fisico de un dataset para visualizar su contenido.
+    Lee el archivo desde R2 para visualizar su contenido.
 
     Se soportan los mismos formatos permitidos por la carga actual: CSV y Excel.
     Si el archivo no existe o tiene un formato no soportado, el endpoint llamador
     transforma la excepcion en una respuesta HTTP adecuada.
     """
     extension = os.path.splitext(dataset.ruta_archivo)[1].lower()
+    buffer = _gestor.leer_archivo(dataset.ruta_archivo)
 
     if extension == ".csv":
-        return pd.read_csv(dataset.ruta_archivo)
+        return pd.read_csv(buffer)
 
     if extension in [".xlsx", ".xls"]:
-        return pd.read_excel(dataset.ruta_archivo)
+        return pd.read_excel(buffer)
 
     raise ValueError("Formato de archivo no soportado para visualizacion")
 
