@@ -1,10 +1,12 @@
 import json
+import logging
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
 RESPUESTA_NO_DISPONIBLE = "No puedo responder esa pregunta con el perfilado disponible del dataset."
 
@@ -52,8 +54,14 @@ def extraer_texto_respuesta(payload: dict[str, Any]) -> str:
 
 
 def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
-    print("VARIALBE",settings.GEMINI_API_KEY)
-    
+    logger.info(
+        "Gemini config -> model=%s base_url=%s api_key_set=%s api_key_len=%s",
+        settings.GEMINI_MODEL,
+        settings.GEMINI_API_BASE_URL,
+        bool(settings.GEMINI_API_KEY),
+        len(settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else 0,
+    )
+
     if not settings.GEMINI_API_KEY:
         raise GeminiServiceError("GEMINI_API_KEY no esta configurada")
 
@@ -110,6 +118,12 @@ def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
 
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        # Este log es la clave: te muestra exactamente qué rechazó Gemini
+        logger.error(
+            "Error HTTP de Gemini (status=%s): %s",
+            exc.response.status_code,
+            exc.response.text,
+        )
         if exc.response.status_code == 429:
             raise GeminiServiceError(
                 "El asistente alcanzó temporalmente el límite de consultas. Intenta nuevamente en unos minutos."
@@ -118,6 +132,7 @@ def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
             "El servicio del asistente no está disponible en este momento. Intenta nuevamente más tarde."
         ) from exc
     except httpx.RequestError as exc:
+        logger.error("Error de conexión al llamar a Gemini: %s", repr(exc))
         raise GeminiServiceError(
             "No fue posible conectar con el servicio del asistente. Intenta nuevamente más tarde."
         ) from exc

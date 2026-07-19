@@ -1,17 +1,21 @@
-import os
-
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.carga.models import Dataset
+from app.modules.carga.service import GestorAlmacenamiento
 from app.modules.resumen import schemas, service
 from app.modules.usuarios.models import Usuario
 from app.modules.usuarios.service import get_current_user
 
 
 router = APIRouter(prefix="/resumen", tags=["resumen ejecutivo"])
+
+# Mismo patron que en `carga`: una unica instancia de GestorAlmacenamiento
+# reutilizada entre requests, en vez de crear un cliente boto3 nuevo por cada
+# descarga.
+gestor = GestorAlmacenamiento()
 
 
 def dataset_usuario(dataset_id: int, db: Session, usuario: Usuario) -> Dataset:
@@ -47,7 +51,7 @@ def generar_resumen_ejecutivo(
 
     Primero comprueba que el dataset pertenezca al usuario autenticado. Luego
     delega en el servicio la generación del PDF o reutiliza el resumen definitivo
-    cuando este ya existe.
+    cuando este ya existe en R2.
 
     Retorna el identificador del dataset, el estado del resumen y la URL de
     descarga. Los errores esperados se convierten en respuestas HTTP según su
@@ -88,8 +92,8 @@ def descargar_resumen_ejecutivo(
     Descarga el resumen ejecutivo generado para un dataset del usuario.
 
     Verifica que el dataset solicitado pertenezca al usuario autenticado y que
-    el archivo PDF exista físicamente. Cuando está disponible, lo entrega como
-    respuesta descargable con un nombre de archivo seguro y descriptivo.
+    el PDF exista en R2. Cuando está disponible, lo transmite como respuesta
+    descargable con un nombre de archivo seguro y descriptivo.
 
     Retorna 404 si el dataset no existe, no pertenece al usuario o si su resumen
     ejecutivo todavía no ha sido generado.
@@ -98,14 +102,17 @@ def descargar_resumen_ejecutivo(
     # Impide consultar resúmenes de datasets pertenecientes a otros usuarios.
     dataset = dataset_usuario(dataset_id, db, current_user)
 
-    # Obtiene la ubicación esperada del PDF y comprueba que ya esté generado.
-    ruta = service.ruta_resumen_ejecutivo(dataset)
-    if not os.path.isfile(ruta):
+    # Obtiene la key esperada del PDF en R2 y comprueba que ya esté generado.
+    key = service.key_resumen_ejecutivo_dataset(dataset)
+    if not gestor.existe_archivo(key):
         raise HTTPException(status_code=404, detail="El resumen ejecutivo todavía no ha sido generado")
 
-    # Envía el PDF como archivo adjunto usando un nombre apto para descarga.
-    return FileResponse(
-        ruta,
+    # Transmite el PDF descargado de R2 como archivo adjunto, sin escribirlo
+    # nunca en disco local.
+    buffer = gestor.leer_archivo(key)
+    nombre_descarga = f"resumen_ejecutivo_{service.nombre_archivo_seguro(dataset.nombre)}.pdf"
+    return StreamingResponse(
+        buffer,
         media_type="application/pdf",
-        filename=f"resumen_ejecutivo_{service.nombre_archivo_seguro(dataset.nombre)}.pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_descarga}"'},
     )

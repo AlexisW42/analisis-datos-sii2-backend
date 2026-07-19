@@ -3,7 +3,6 @@ import io
 import json
 import os
 import re
-import tempfile
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,6 +20,7 @@ from reportlab.platypus import (
 
 from app.core.config import settings
 from app.modules.carga.models import Dataset
+from app.modules.carga.service import GestorAlmacenamiento
 from app.modules.perfilado import models as perfilado_models
 from app.modules.perfilado.service import cargar_cache_perfilado, cargar_dataframe_desde_dataset
 
@@ -43,6 +43,10 @@ AZUL_MEDIO = colors.HexColor("#315B7D")
 AZUL_CLARO = colors.HexColor("#EAF1F6")
 GRIS = colors.HexColor("#5E6B75")
 
+# Se reutiliza el mismo cliente/logica de R2 que usa `carga`, en vez de crear
+# una implementacion distinta.
+gestor = GestorAlmacenamiento()
+
 
 class PerfiladoRequeridoError(Exception):
     """Indica que no existe un perfilado válido para construir el resumen."""
@@ -56,24 +60,25 @@ class ServicioResumenNoDisponibleError(Exception):
     pass
 
 
-def ruta_resumen_ejecutivo(dataset: Dataset) -> str:
-    """Construye la ruta del PDF junto al archivo fuente del dataset.
+def key_resumen_ejecutivo_dataset(dataset: Dataset) -> str:
+    """Construye la key en R2 del PDF, junto al archivo fuente del dataset.
 
     Args:
-        dataset: Dataset cuyo directorio de almacenamiento se utilizará.
+        dataset: Dataset cuyo prefijo de almacenamiento en R2 se utilizará.
 
     Returns:
-        Ruta absoluta o relativa, según ``dataset.ruta_archivo``, en la que se
-        guarda el resumen ejecutivo.
+        Key del objeto en R2 donde se guarda (o se guardará) el resumen
+        ejecutivo, bajo el mismo prefijo que el archivo original del dataset.
     """
-    return os.path.join(os.path.dirname(dataset.ruta_archivo), "resumen_ejecutivo.pdf")
+    prefijo_dataset = dataset.ruta_archivo.rsplit("/", 1)[0]
+    return f"{prefijo_dataset}/resumen_ejecutivo.pdf"
 
 
 def resumen_ejecutivo_disponible(dataset: Dataset) -> bool:
     """
-    Comprueba si el PDF definitivo de un dataset existe en el disco.
+    Comprueba si el PDF definitivo de un dataset existe en R2.
     """
-    return os.path.isfile(ruta_resumen_ejecutivo(dataset))
+    return gestor.existe_archivo(key_resumen_ejecutivo_dataset(dataset))
 
 
 def url_resumen_ejecutivo(dataset_id: int) -> str:
@@ -111,7 +116,8 @@ def obtener_perfilado_existente(db, dataset: Dataset) -> dict[str, Any]:
             puede cargarse como un perfilado válido.
     """
     # Se consulta el registro más reciente disponible para el identificador del
-    # dataset y se delega su deserialización al servicio de perfilado.
+    # dataset y se delega su deserialización al servicio de perfilado, que ya
+    # sabe leer el JSON cacheado desde R2.
     perfilado = db.query(perfilado_models.Perfilado).filter(
         perfilado_models.Perfilado.id_dataset == dataset.id
     ).first()
@@ -402,7 +408,14 @@ def _interpretacion_con_subtitulos(texto: str, estilo) -> Paragraph:
     return Paragraph(texto_seguro.replace("\n", "<br/>"), estilo)
 
 
-def generar_pdf(dataset: Dataset, cache: dict[str, Any], df: pd.DataFrame, interpretacion: str, variables: list[str], destino: str) -> None:
+def generar_pdf(dataset: Dataset, cache: dict[str, Any], df: pd.DataFrame, interpretacion: str, variables: list[str], destino: io.BytesIO) -> None:
+    """
+    Renderiza el resumen ejecutivo completo con ReportLab.
+
+    `destino` es un buffer en memoria (BytesIO); ReportLab acepta un objeto
+    tipo archivo igual que aceptaria una ruta en disco, asi que el PDF nunca
+    toca el disco local y queda listo para subirse directo a R2.
+    """
     estilos = getSampleStyleSheet()
     titulo = ParagraphStyle("Titulo", parent=estilos["Title"], textColor=AZUL, fontSize=25, leading=29, alignment=TA_LEFT)
     h1 = ParagraphStyle("H1", parent=estilos["Heading1"], textColor=AZUL, fontSize=15, leading=19, spaceBefore=10, spaceAfter=8)
@@ -459,23 +472,29 @@ def generar_pdf(dataset: Dataset, cache: dict[str, Any], df: pd.DataFrame, inter
 
 
 def obtener_o_generar_resumen(db, dataset: Dataset) -> tuple[str, bool]:
-    destino = ruta_resumen_ejecutivo(dataset)
-    if os.path.isfile(destino):
-        return destino, False
+    """
+    Devuelve la key en R2 del resumen ejecutivo, generandolo si aun no existe.
+
+    Si el PDF definitivo ya existe en R2 se reutiliza tal cual. En caso
+    contrario se arma por completo en memoria (perfilado + dataframe leidos
+    desde R2 + interpretacion de Gemini) y se sube una unica vez al bucket,
+    evitando dejar objetos parciales si algo falla a mitad de camino.
+    """
+    key_destino = key_resumen_ejecutivo_dataset(dataset)
+    if gestor.existe_archivo(key_destino):
+        return key_destino, False
+
     cache = obtener_perfilado_existente(db, dataset)
-    if not os.path.isfile(dataset.ruta_archivo):
-        raise FileNotFoundError(dataset.ruta_archivo)
+    # `cargar_dataframe_desde_dataset` ya valida contra R2 y lanza
+    # FileNotFoundError si el archivo fuente no existe; no hace falta
+    # duplicar ese chequeo aqui.
     df = cargar_dataframe_desde_dataset(dataset)
     variables = seleccionar_variables_diversas(df, cache)
     interpretacion = interpretar_perfilado_con_gemini(cache, variables, df)
-    os.makedirs(os.path.dirname(destino), exist_ok=True)
-    temporal = tempfile.NamedTemporaryFile(prefix="resumen_", suffix=".pdf", dir=os.path.dirname(destino), delete=False)
-    temporal.close()
-    try:
-        generar_pdf(dataset, cache, df, interpretacion, variables, temporal.name)
-        os.replace(temporal.name, destino)
-    except Exception:
-        if os.path.exists(temporal.name):
-            os.remove(temporal.name)
-        raise
-    return destino, True
+
+    buffer = io.BytesIO()
+    generar_pdf(dataset, cache, df, interpretacion, variables, buffer)
+    buffer.seek(0)
+    gestor.subir_bytes(key_destino, buffer.read(), content_type="application/pdf")
+
+    return key_destino, True
