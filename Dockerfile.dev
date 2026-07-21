@@ -6,6 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# Si tu requirements.txt incluye psycopg2 (NO psycopg2-binary) u otro paquete
+# que compile contra libpq, descomenta estas líneas antes del pip install:
+# RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev \
+#     && rm -rf /var/lib/apt/lists/*
+
 # Usuario no-root
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
@@ -18,5 +23,8 @@ USER appuser
 
 EXPOSE 8000
 
-# $PORT lo inyecta la plataforma (Railway/Render); localmente cae a 8000
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4"]
+# $PORT lo inyecta la plataforma (Railway/Render); localmente cae a 8000.
+# WEB_CONCURRENCY controla los workers (default 2, ajústalo según RAM del plan).
+# Las migraciones NO van aquí: se corren como "Pre-Deploy Command" en Render
+# (alembic upgrade head) para evitar que varias instancias migren a la vez.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]
