@@ -266,7 +266,6 @@ def interpretar_perfilado_con_gemini(cache: dict[str, Any], variables_selecciona
             "temperature": 0.1,
             "topP": 0.8,
             "maxOutputTokens": 3000,
-            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
     try:

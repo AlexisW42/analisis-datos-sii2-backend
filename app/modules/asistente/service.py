@@ -104,7 +104,6 @@ def preguntar_a_gemini(pregunta: str, cache_perfilado: dict[str, Any]) -> str:
             "temperature": 0.1,
             "topP": 0.8,
             "maxOutputTokens": 1200,
-            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 

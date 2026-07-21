@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
     DATASETS_STORAGE_DIR: str = ""
     GEMINI_API_KEY: str
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str 
     GEMINI_API_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
     # Agrega más configuraciones según necesites
     R2_ACCOUNT_ID: str
