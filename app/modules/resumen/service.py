@@ -267,7 +267,7 @@ def interpretar_perfilado_con_gemini(cache: dict[str, Any], variables_selecciona
         "generationConfig": {
             "temperature": 0.1,
             "topP": 0.8,
-            "maxOutputTokens": 3000,
+            "maxOutputTokens": 8192,
         },
     }
     try:
