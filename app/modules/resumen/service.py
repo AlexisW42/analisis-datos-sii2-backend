@@ -26,7 +26,9 @@ from app.modules.perfilado.service import cargar_cache_perfilado, cargar_datafra
 
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt  # noqa: E402
+import logging
 
+logger = logging.getLogger(__name__)
 
 MAX_GRAFICAS = 12
 UMBRAL_CORRELACION_ALTA = 0.70
@@ -274,8 +276,6 @@ def interpretar_perfilado_con_gemini(cache: dict[str, Any], variables_selecciona
             headers={"x-goog-api-key": settings.GEMINI_API_KEY}, json=payload, timeout=45.0,
         )
         response.raise_for_status()
-        # Gemini puede dividir una respuesta en varias partes; se combinan todas
-        # las que contienen texto no vacío.
         candidato = response.json().get("candidates", [{}])[0]
         partes = candidato.get("content", {}).get("parts", [])
         texto = "\n".join(p.get("text", "").strip() for p in partes if p.get("text", "").strip())
@@ -284,13 +284,22 @@ def interpretar_perfilado_con_gemini(cache: dict[str, Any], variables_selecciona
             if encabezado not in texto
         ]
         if candidato.get("finishReason") == "MAX_TOKENS" or encabezados_faltantes:
+            logger.error(
+                "Interpretacion incompleta -> finishReason=%s encabezados_faltantes=%s texto_len=%s",
+                candidato.get("finishReason"), encabezados_faltantes, len(texto),
+            )
             raise ValueError("Gemini devolvió una interpretación incompleta")
         return texto
-    except (httpx.HTTPError, KeyError, ValueError, IndexError) as exc:
+    except httpx.HTTPStatusError as exc:
+        logger.error("Error HTTP de Gemini en resumen (status=%s): %s", exc.response.status_code, exc.response.text)
         raise ServicioResumenNoDisponibleError(
             "El servicio de generación de resumen no está disponible en este momento. Intente más tarde"
         ) from exc
-
+    except (httpx.HTTPError, KeyError, ValueError, IndexError) as exc:
+        logger.exception("Error inesperado generando interpretacion con Gemini")
+        raise ServicioResumenNoDisponibleError(
+            "El servicio de generación de resumen no está disponible en este momento. Intente más tarde"
+        ) from exc
 
 def seleccionar_variables_diversas(df: pd.DataFrame, cache: dict[str, Any]) -> list[str]:
     """Selecciona hasta ``MAX_GRAFICAS`` variables informativas y diversas.
