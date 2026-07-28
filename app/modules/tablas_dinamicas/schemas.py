@@ -8,12 +8,12 @@ class PivotRequest(BaseModel):
     valores: str = Field(..., description="La variable numérica o categórica a medir")
     funcion_agregacion: str = Field(
         ..., 
-        description="Operación matemática: 'sum', 'mean', 'count', 'max', 'min'"
+        # Agregamos 'median' a la lista de documentación
+        description="Operación matemática: 'sum', 'mean', 'count', 'max', 'min', 'median'" 
     )
 
 class PivotResponse(BaseModel):
     dataset_id: int
     configuracion: dict
-    # Entregamos la tabla como un diccionario orientado a registros, ideal para el Frontend
     datos_pivot: List[Dict[str, Any]] 
     mensaje: str = "Tabla dinámica generada con éxito"

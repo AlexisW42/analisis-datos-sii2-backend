@@ -53,3 +53,4 @@ scipy
 matplotlib
 reportlab
 boto3
+matplotlib

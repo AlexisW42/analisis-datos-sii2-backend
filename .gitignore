@@ -8,3 +8,7 @@ storage/
 .env
 CLAUDE.md
 
+app/modules/tablas_dinamicas/PruebaExcepciones.py
+app/modules/tablas_dinamicas/PruebaPivot.py
+app/modules/tablas_dinamicas/PruebaExcepciones.py
+app/modules/tablas_dinamicas/PruebaPivot.py
