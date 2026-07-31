@@ -12,3 +12,13 @@ app/modules/tablas_dinamicas/PruebaExcepciones.py
 app/modules/tablas_dinamicas/PruebaPivot.py
 app/modules/tablas_dinamicas/PruebaExcepciones.py
 app/modules/tablas_dinamicas/PruebaPivot.py
+
+# Entorno de Pruebas CAATs
+.pytest_cache/
+test_storage/
+
+test_dataset.csv
+vacio.csv
+mal_estructurado.csv
+payload_malicioso.exe
+auditoria_datos.csv

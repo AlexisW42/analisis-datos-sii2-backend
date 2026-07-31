@@ -53,3 +53,5 @@ scipy
 matplotlib
 reportlab
 matplotlib
+pytest
+pytest-asyncio
