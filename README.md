@@ -42,7 +42,7 @@ Usa esta opción si tú o tus compañeros ya tienen los contenedores funcionando
 3. Ejecuta el siguiente comando exactamente como aparece:
 
 ```bash
-docker-compose exec backend pytest tests/caats/ -v
+docker exec sii2_backend python -m pytest tests/caats/ -v
 ```
 
 4. Lee el reporte verde en la pantalla. Este reporte confirma que las pruebas pasaron exitosamente.
